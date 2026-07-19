@@ -8,7 +8,6 @@ import javacard.framework.APDU;
 
 public class MyAppl extends Applet {
 	
-
 	private boolean isPersonalized = false;
     private static final byte[] PASSWORD = {(byte)'P', (byte)'A', (byte)'S', (byte)'S'};
 	

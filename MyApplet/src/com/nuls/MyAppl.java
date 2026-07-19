@@ -47,14 +47,12 @@ public class MyAppl extends Applet {
                 buffer[0] = isPersonalized ? (byte) 0x01 : (byte) 0x00;
                 apdu.setOutgoingAndSend((short) 0, (short) 1);
                 break;
-
             case (byte) 0x00: // Hello
                 if (!isPersonalized) ISOException.throwIt((short) 0x6985);
                 byte[] data = {'H','e','l','l','o',' ','p','e','o','p','l','e'};
                 Util.arrayCopyNonAtomic(data, (short) 0, buffer, (short) 0, (short) data.length);
                 apdu.setOutgoingAndSend((short) 0, (short) data.length);
                 break;
-
             default:
                 ISOException.throwIt(ISO7816.SW_INS_NOT_SUPPORTED);
         }

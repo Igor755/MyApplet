@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<classpath>
+	<classpathentry kind="src" path="src"/>
+	<classpathentry kind="con" path="com.nxp.id.jcop.eclipse.containers.cardconfig/com.nxp.id.jcop.eclipse.cardconfigs.custom;com.nxp.id.jcop.eclipse.cardapis.jc304;com.nxp.id.jcop.eclipse.cardapis.gp221"/>
+	<classpathentry kind="lib" path="C:/Users/Jonny_b/Desktop/sw623415 JCOP-4-Tools-(IOT)-615/OM9900_0615011XXXPE_RC1/api.intergalaxy.jar"/>
+	<classpathentry kind="output" path="bin"/>
+</classpath>

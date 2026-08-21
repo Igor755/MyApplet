@@ -39,6 +39,9 @@ public class MyAppl extends Applet implements ToolkitConstants, ToolkitInterface
 	byte[] resetText = { (byte) 'R', (byte) 'e', (byte) 's', (byte) 'e', (byte) 't', (byte) ' ', (byte) 'o',
 			(byte) 'k' };
 
+	private static byte[] sharedBuffer;
+	
+	
 	public MyAppl(byte[] bArray, short sOffset, byte bLength) {
 		register(bArray, (short) (sOffset + 1), bArray[sOffset]);
 		initMenu();
@@ -61,6 +64,7 @@ public class MyAppl extends Applet implements ToolkitConstants, ToolkitInterface
 
 	public static void install(byte[] bArray, short bOffset, byte bLength) {
 		new MyAppl(bArray, bOffset, bLength);
+		sharedBuffer = JCSystem.makeTransientByteArray((short) 128, JCSystem.CLEAR_ON_RESET);
 
 	}
 
@@ -134,98 +138,84 @@ public class MyAppl extends Applet implements ToolkitConstants, ToolkitInterface
 	}
 
 	private void getProfileInfo(ProactiveHandler proHdlr) {
-		byte[] imei = getImei(proHdlr);
-		byte[] tech = getAccessTechnology(proHdlr);
-		//byte[] locInfo = getLocationInfo(proHdlr);
-		
-		byte[] titleImei = { 'I', 'M', 'E', 'I', ':', ' ' };
+	    // 1. Получаем длину IMEI, при этом сам текст IMEI уже лежит в sharedBuffer (с индекса 0)
+	    short imeiLen = getImei(proHdlr);
+	    
+	    // Пока не трогаем getAccessTechnology, оставляем как было у тебя (или временно закомментируем, если там тоже массив/другая логика)
+	    byte[] tech = getAccessTechnology(proHdlr); 
+	    
+	    byte[] titleImei = { 'I', 'M', 'E', 'I', ':', ' ' };
+	    byte[] titleTech = { '\n', 'T', 'E', 'C', 'H', ':', ' ' };
+	    
+	    // Считаем общую длину (обратите внимание: вместо imei.length теперь используем imeiLen)
+	    short length = (short) (titleImei.length + imeiLen + titleTech.length + tech.length);
 
-		byte[] titleTech = { '\n', 'T', 'E', 'C', 'H', ':', ' ' };
-		
+	    byte[] data = new byte[length];
+	    short offset = 0;
 
-		short length = (short) (titleImei.length + imei.length + titleTech.length + tech.length /* + locInfo.length */);
+	    // Копируем заголовок IMEI
+	    Util.arrayCopy(titleImei, (short) 0, data, offset, (short) titleImei.length);
+	    offset += titleImei.length;
 
-		byte[] data = new byte[length];
+	    // КОПИРУЕМ IMEI ИЗ ОБЩЕГО БУФЕРА (а не из переменной-массива)
+	    // Он лежит в sharedBuffer с индекса 0, длиной imeiLen
+	    Util.arrayCopy(sharedBuffer, (short) 0, data, offset, imeiLen);
+	    offset += imeiLen;
 
-		short offset = 0;
+	    // Копируем заголовок TECH
+	    Util.arrayCopy(titleTech, (short) 0, data, offset, (short) titleTech.length);
+	    offset += titleTech.length;
 
-		Util.arrayCopy(titleImei, (short) 0, data, offset, (short) titleImei.length);
+	    // Копируем TECH
+	    Util.arrayCopy(tech, (short) 0, data, offset, (short) tech.length);
+	    offset += tech.length;
 
-		offset += titleImei.length;
-
-		Util.arrayCopy(imei, (short) 0, data, offset, (short) imei.length);
-
-		offset += imei.length;
-
-		Util.arrayCopy(titleTech, (short) 0, data, offset, (short) titleTech.length);
-
-		offset += titleTech.length;
-
-		Util.arrayCopy(tech, (short) 0, data, offset, (short) tech.length);
-
-		offset += tech.length;
-
-		//Util.arrayCopy(locInfo, (short) 0, data, offset, (short) locInfo.length);
-
-		proHdlr.initDisplayText((byte) 0x00, DCS_8_BIT_DATA, data, (short) 0, (short) data.length);
-
-		proHdlr.send();
+	    proHdlr.initDisplayText((byte) 0x00, DCS_8_BIT_DATA, data, (short) 0, (short) data.length);
+	    proHdlr.send();
 	}
 
-	private byte[] getImei(ProactiveHandler proHdlr) {
-		byte[] imeiDisplay = new byte[15]; // Обычный ASCII массив для экрана
-		byte[] imei = new byte[16];
+	
+	private short getImei(ProactiveHandler proHdlr) {
+	    proHdlr.init(PRO_CMD_PROVIDE_LOCAL_INFORMATION, (byte) 0x01, DEV_ID_ME);
+	    byte result = proHdlr.send();
 
-		proHdlr.init(PRO_CMD_PROVIDE_LOCAL_INFORMATION, (byte) 0x01, // IMEI
-				DEV_ID_ME);
-		byte result = proHdlr.send();
+	    if (result == RES_CMD_PERF) {
+	        ProactiveResponseHandler resp = ProactiveResponseHandler.getTheHandler();
+	        if (resp.findTLV(TAG_IMEI, (byte) 1) != TLV_NOT_FOUND) {
+	            short len = resp.getValueLength();
+	            
+	            // Читаем сырые байты во вторую половину буфера (например, со смещения 16), 
+	            // чтобы не затереть то, куда будем распаковывать результат.
+	            resp.copyValue((short) 0, sharedBuffer, (short) 16, len);
 
-		if (result == RES_CMD_PERF) {
-			ProactiveResponseHandler resp = ProactiveResponseHandler.getTheHandler();
-			if (resp.findTLV(TAG_IMEI, (byte) 1) != TLV_NOT_FOUND) {
-				short len = resp.getValueLength();
-				// Читаем сырые байты ответа в буфер imei
-				short readLen = resp.copyValue((short) 0, imei, (short) 0, len);
+	            // Распаковываем BCD в начало буфера (смещение 0) в нормальный ASCII текст
+	            short outIdx = 0;
+	            short srcIndex = 0; // Начинаем чтение с самого начала
 
-				// Распаковываем BCD/упакованные цифры IMEI в нормальный ASCII текст.
-				// Обычно IMEI в ответе идет начиная с определенного смещения (пропускаем байт
-				// типа, если он есть)
-				// или декодируем побайтово:
-				short outIdx = 0;
-				for (short i = 0; i < readLen && outIdx < 15; i++) {
-					byte b = imei[i];
-					byte low = (byte) (b & 0x0F); // Сначала младший ниббл
-					byte high = (byte) ((b >> 4) & 0x0F); // Потом старший ниббл
+	            for (short i = 0; i < len && outIdx < 15; i++) {
+	                byte b = sharedBuffer[srcIndex]; // Чистый short без вычислений
+	                srcIndex = (short) (srcIndex + 1);
 
-					if (low <= 9) {
-						imeiDisplay[outIdx++] = (byte) ('0' + low);
-					}
-					if (high <= 9 && outIdx < 15) {
-						imeiDisplay[outIdx++] = (byte) ('0' + high);
-					}
-				}
+	                byte low = (byte) (b & 0x0F); 
+	                byte high = (byte) ((b >> 4) & 0x0F); 
 
-				return imeiDisplay;
-				/*
-				 * proHdlr.initDisplayText( (byte)0x00, DCS_8_BIT_DATA, imeiDisplay, (short)0,
-				 * outIdx); proHdlr.send();
-				 */
-			} else {
-				byte[] text = { (byte) 'N', (byte) 'o', (byte) ' ', (byte) 'I', (byte) 'M', (byte) 'E', (byte) 'I' };
-				/*
-				 * proHdlr.initDisplayText((byte)0x00, DCS_8_BIT_DATA, text, (short)0,
-				 * (short)text.length); proHdlr.send();
-				 */
-				return text;
-			}
-		} else {
-			byte[] text = { (byte) 'E', (byte) 'r', (byte) 'r', (byte) 'o', (byte) 'r' };
-			/*
-			 * proHdlr.initDisplayText((byte)0x00, DCS_8_BIT_DATA, text, (short)0,
-			 * (short)text.length); proHdlr.send();
-			 */
-			return text;
-		}
+	                if (low <= 9) {
+	                    sharedBuffer[outIdx] = (byte) ('0' + low);
+	                    outIdx = (short) (outIdx + 1);
+	                }
+	                if (high <= 9 && outIdx < 15) {
+	                    sharedBuffer[outIdx] = (byte) ('0' + high);
+	                    outIdx = (short) (outIdx + 1);
+	                }
+	            }
+	            return outIdx;
+	        }
+	    }
+	    
+	    // Если ошибка или нет IMEI, пишем текст прямо в начало буфера
+	    byte[] err = {'N', 'o', ' ', 'I', 'M', 'E', 'I'};
+	    Util.arrayCopy(err, (short) 0, sharedBuffer, (short) 0, (short) err.length);
+	    return (short) err.length;
 	}
 
 	private byte[] getAccessTechnology(ProactiveHandler proHdlr) {
